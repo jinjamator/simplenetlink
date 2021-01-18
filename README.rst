@@ -28,19 +28,19 @@ Install simplenetlink by running:
 Examples
 ---------
 
-.. literalinclude:: ../../examples/create_tagged_interface.py
+.. literalinclude:: examples/create_tagged_interface.py
   :language: python
 
 
-.. literalinclude:: ../../examples/create_ipvlan_interface.py
+.. literalinclude:: examples/create_ipvlan_interface.py
   :language: python
 
 
-.. literalinclude:: ../../examples/add_route_to_namespace.py
+.. literalinclude:: examples/add_route_to_namespace.py
   :language: python
 
 
-.. literalinclude:: ../../examples/create_config_from_yaml.py
+.. literalinclude:: examples/create_config_from_yaml.py
   :language: python
 
 

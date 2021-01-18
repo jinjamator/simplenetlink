@@ -2,7 +2,7 @@ Introduction
 ==================
 
 
-Simplenetlink is an abstraction layer to simplify programatic non-persistant network configuration for linux on top of pyroute2. It was written to have a simple interface for network test setups. 
+Simplenetlink is an abstraction layer to simplify programatic non-persistent network configuration for linux on top of pyroute2. It was written to have a simple interface for network test setups. 
 
 Features
 -----------------

@@ -10,7 +10,7 @@ class SimpleNetlink(object):
         self._current_namespace = namespace
         self._previous_namespace_instance = None
         self._previous_namespace = None
-        self._log.level = logging.DEBUG
+        #self._log.level = logging.DEBUG
         self._supported_virtual_interface_types = ['ipvlan','tagged']
 
     def get_interface_index(self, ifname):

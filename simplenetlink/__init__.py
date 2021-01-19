@@ -152,7 +152,7 @@ class SimpleNetlink(object):
                 ifname=interface_name,
                 kind='ipvlan',
                 link=base_idx,
-                ipvlan_mode=2
+                ipvlan_mode=1 # l2 mode so arp can be handled from namespace
             )
             idx = self.get_interface_index(interface_name)
             namespace=kwargs.get('namespace')

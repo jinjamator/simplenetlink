@@ -144,6 +144,11 @@ class SimpleNetlink(object):
             raise ValueError(f'parent_interface not specified for vlan interface {interface_name}')
 
     def __create_ipvlan(self, interface_name,**kwargs):
+        ipvlan_modes = {
+            'l2':0,
+            'l3':1,
+            'l3s':2,
+        }
         if kwargs.get('parent_interface'):
             (base_namespace, base_idx) = self.find_interface_in_all_namespaces(kwargs.get('parent_interface'))
             self._log.debug(f'found parent_interface in namespace {base_namespace}')
@@ -152,7 +157,7 @@ class SimpleNetlink(object):
                 ifname=interface_name,
                 kind='ipvlan',
                 link=base_idx,
-                ipvlan_mode=1 # l2 mode so arp can be handled from namespace
+                ipvlan_mode=ipvlan_modes['l2'] # l2 mode so arp can be handled from namespace
             )
             idx = self.get_interface_index(interface_name)
             namespace=kwargs.get('namespace')
@@ -228,7 +233,26 @@ class SimpleNetlink(object):
                 raise(e)
         self._log.debug(f'setting ipv4_address {prefix} on {interface_name} in namespace {self._current_namespace}')
         return True
-        
+
+    def interface_delete_ipv4(self, interface_name, prefix):
+        idx = self.get_interface_index(interface_name)
+        if not idx:
+            raise ValueError(f'interface {interface_name} not found in namespace {self._current_namespace}')
+        address,prefix_len = prefix.strip().split('/')
+        prefix_len=int(prefix_len)
+        try:
+            self.ipr.addr('del', index=idx, address=address, prefixlen=prefix_len)
+        except netlink.exceptions.NetlinkError as e:
+            if e.code == 98 or e.code == 17:
+                self._log.debug(f'prefix {prefix} already in use in namespace {self._current_namespace} -> ignoring request')
+                self._log.debug(e)
+                return True
+            else:
+                raise(e)
+        self._log.debug(f'setting ipv4_address {prefix} on {interface_name} in namespace {self._current_namespace}')
+        return True
+
+
     def add_route (self, prefix, nexthop):
         try:
             self.ipr.route('add', gateway=nexthop, prefix=prefix)

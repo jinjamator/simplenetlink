@@ -5,7 +5,7 @@ import time
 
 class SimpleNetlink(object):
     def __init__(self, namespace=None):
-        self.ipr = self._globalNS = IPRoute()
+        self.ipr = IPRoute()
         self._log = logging.getLogger("SimpleNetlink")
         self._current_namespace = namespace
         self._previous_namespace_instance = None
@@ -37,9 +37,11 @@ class SimpleNetlink(object):
 
     def set_current_namespace(self, namespace):
         if not namespace:
-            self._previous_namespace_instance = self.ipr
+            if self._current_namespace:
+              self._log.info(f'close {self._current_namespace}')
+              self.ipr.close()
             self._previous_namespace = self._current_namespace
-            self.ipr = self._globalNS
+            self.ipr = IPRoute()
             self._current_namespace = namespace
         elif namespace not in self.get_namespaces():
             self._log.debug(
@@ -47,8 +49,9 @@ class SimpleNetlink(object):
             )
             self.create_namespace(namespace)
         if namespace:
-            self._previous_namespace_instance = self.ipr
             self._previous_namespace = self._current_namespace
+            if self.ipr:
+              self.ipr.close()
             self.ipr = NetNS(namespace)
             self._current_namespace = namespace
         self._log.debug(

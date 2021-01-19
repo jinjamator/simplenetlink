@@ -158,11 +158,12 @@ class SimpleNetlink(object):
             namespace=kwargs.get('namespace')
             if namespace:
                 self.set_current_namespace(namespace)
-                self.restore_previous_namespace()
+                self.set_current_namespace(base_namespace)
                 self.ipr.link('set', index=idx, net_ns_fd= kwargs.get('namespace'))
+                self.set_current_namespace(namespace)
             else:    
                 self.ipr.link('set', index=idx, net_ns_pid=1)
-            self.set_current_namespace(namespace)
+                self.set_current_namespace(None)
             idx=self.get_interface_index(interface_name)
             return (namespace, idx)
         else:
@@ -191,11 +192,13 @@ class SimpleNetlink(object):
                 
                 if kwargs.get('namespace'):
                     self.set_current_namespace(kwargs.get('namespace'))
-                    self.restore_previous_namespace()
+                    self.set_current_namespace(namespace)
                     self.ipr.link('set', index=idx, net_ns_fd=kwargs.get('namespace'), state='up')
                     self.set_current_namespace(kwargs.get('namespace'))                    
                 else:
-                    self.ipr.link('set', index=idx, net_ns_pid=1, state='up')        
+                    self.set_current_namespace(namespace)
+                    self.ipr.link('set', index=idx, net_ns_pid=1, state='up')
+                    self.set_current_namespace(None)         
         else:            
             if kwargs.get('type') in self._supported_virtual_interface_types:
                 self._log.debug(f'interface type of {interface} is virtual interface of type {kwargs.get("type")} which does not exist -> creating')

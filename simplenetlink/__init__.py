@@ -317,9 +317,36 @@ class SimpleNetlink(object):
             )
         self.ipr.link("set", index=idx, state="down")
 
+    def get_routes(self):
+        retval = {
+            'static':{},
+            'dynamic':{},
+            'local':{}
+        }
+        for route in self.ipr.route("show", type=1):
+            if route.get_attr('RTA_GATEWAY'):
+                dest = route.get_attr('RTA_DST')
+                if dest:
+                    dest=f"{dest}/{route.get('dst_len')}"
+                else:
+                    dest='default'
+                if dest not in retval['static']:
+                    retval['static'][dest]=[]
+                retval['static'][dest].append(route.get_attr('RTA_GATEWAY'))
+            elif route.get_attr('RTA_PREFSRC'):
+                dest = f"{route.get_attr('RTA_DST')}/{route.get('dst_len')}"
+                if dest not in retval['local']:
+                    retval['local'][dest]=[]
+                retval['local'][dest].append(f"{route.get_attr('RTA_PREFSRC')}")
+            else:
+                raise ValueError(f'Never come here, if so something is really wrong. {route}')
+        return retval
+
+
+
     def add_route(self, prefix, nexthop):
         try:
-            self.ipr.route("add", gateway=nexthop, prefix=prefix)
+            self.ipr.route("add", gateway=nexthop, dst=prefix)
             self._log.debug(
                 f"added route {prefix} via {nexthop} in namespace {self._current_namespace}"
             )
@@ -334,7 +361,7 @@ class SimpleNetlink(object):
 
     def delete_route(self, prefix, nexthop):
         try:
-            self.ipr.route("del", gateway=nexthop, prefix=prefix)
+            self.ipr.route("del", gateway=nexthop, dst=prefix)
         except netlink.exceptions.NetlinkError as e:
             if e.code == 3:
                 self._log.debug(

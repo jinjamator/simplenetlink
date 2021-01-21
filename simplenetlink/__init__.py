@@ -198,12 +198,14 @@ class SimpleNetlink(object):
                 if kwargs.get('namespace'):
                     self.set_current_namespace(kwargs.get('namespace'))
                     self.set_current_namespace(namespace)
-                    self.ipr.link('set', index=idx, net_ns_fd=kwargs.get('namespace'), state='up')
+                    self.ipr.link('set', index=idx, net_ns_fd=kwargs.get('namespace'))
                     self.set_current_namespace(kwargs.get('namespace'))                    
+                    self.interface_up(interface)
                 else:
                     self.set_current_namespace(namespace)
-                    self.ipr.link('set', index=idx, net_ns_pid=1, state='up')
+                    self.ipr.link('set', index=idx, net_ns_pid=1)
                     self.set_current_namespace(None)         
+                    self.interface_up(interface)
         else:            
             if kwargs.get('type') in self._supported_virtual_interface_types:
                 self._log.debug(f'interface type of {interface} is virtual interface of type {kwargs.get("type")} which does not exist -> creating')
@@ -251,6 +253,18 @@ class SimpleNetlink(object):
                 raise(e)
         self._log.debug(f'setting ipv4_address {prefix} on {interface_name} in namespace {self._current_namespace}')
         return True
+
+    def interface_up(interface_name):
+        idx = self.get_interface_index(interface_name)
+        if not idx:
+            raise ValueError(f'interface {interface_name} not found in namespace {self._current_namespace}')
+        self.ipr.link('set', index=idx, state='up')
+
+    def interface_down(interface_name):
+        idx = self.get_interface_index(interface_name)
+        if not idx:
+            raise ValueError(f'interface {interface_name} not found in namespace {self._current_namespace}')
+        self.ipr.link('set', index=idx, state='down')
 
 
     def add_route (self, prefix, nexthop):

@@ -301,7 +301,7 @@ class SimpleNetlink(object):
         )
         return True
 
-    def interface_up(interface_name):
+    def interface_up(self,interface_name):
         idx = self.get_interface_index(interface_name)
         if not idx:
             raise ValueError(
@@ -309,7 +309,7 @@ class SimpleNetlink(object):
             )
         self.ipr.link("set", index=idx, state="up")
 
-    def interface_down(interface_name):
+    def interface_down(self,interface_name):
         idx = self.get_interface_index(interface_name)
         if not idx:
             raise ValueError(

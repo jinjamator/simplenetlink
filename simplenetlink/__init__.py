@@ -11,8 +11,16 @@ class SimpleNetlink(object):
         self._current_namespace = namespace
         self._previous_namespace_instance = None
         self._previous_namespace = None
-        # self._log.level = logging.DEBUG
+        self._log.level = logging.DEBUG
         self._supported_virtual_interface_types = ["ipvlan", "tagged"]
+
+
+    def reset(self):
+        self._current_namespace = None
+        self._previous_namespace_instance = None
+        self._previous_namespace = None
+        self.ipr.close()
+        self.ipr= IPRoute()
 
     def get_interface_index(self, ifname):
         res = self.ipr.link_lookup(ifname=ifname)
@@ -121,7 +129,7 @@ class SimpleNetlink(object):
             self._log.debug(f"cannot find interface {interface_name} in any namespace")
         return (namespace, idx)
 
-    def __create_tagged(self, interface_name, **kwargs):
+    def __create_tagged(self, interface_name,options={}, **kwargs):
         if kwargs.get("parent_interface"):
             (base_namespace, base_idx) = self.find_interface_in_all_namespaces(
                 kwargs.get("parent_interface")
@@ -146,6 +154,7 @@ class SimpleNetlink(object):
                 kind="vlan",
                 link=base_idx,
                 vlan_id=int(kwargs.get("vlan_id")),
+                **options
             )
             idx = self.get_interface_index(interface_name)
             namespace = kwargs.get("namespace")
@@ -163,7 +172,7 @@ class SimpleNetlink(object):
                 f"parent_interface not specified for vlan interface {interface_name}"
             )
 
-    def __create_ipvlan(self, interface_name, **kwargs):
+    def __create_ipvlan(self, interface_name, options={}, **kwargs):
         ipvlan_modes = {
             "l2": 0,
             "l3": 1,
@@ -175,6 +184,7 @@ class SimpleNetlink(object):
             )
             self._log.debug(f"found parent_interface in namespace {base_namespace}")
             self.set_current_namespace(base_namespace)
+
             self.ipr.link(
                 "add",
                 ifname=interface_name,
@@ -183,6 +193,8 @@ class SimpleNetlink(object):
                 ipvlan_mode=ipvlan_modes[
                     "l2"
                 ],  # l2 mode so arp can be handled from namespace
+                **options
+                
             )
             idx = self.get_interface_index(interface_name)
             namespace = kwargs.get("namespace")
@@ -202,10 +214,13 @@ class SimpleNetlink(object):
             )
 
     def create_interface(self, interface_name, **kwargs):
+        options={}
+        if kwargs.get("mtu"):
+            options["mtu"]=kwargs.get("mtu")
 
         f = getattr(self, f"_SimpleNetlink__create_{kwargs.get('type')}")
         if f:
-            (namespace, idx) = f(interface_name, **kwargs)
+            (namespace, idx) = f(interface_name, options, **kwargs)
             if kwargs.get("link_state", "").lower() == "down":
                 self.ipr.link("set", index=idx, state="down")
             else:
@@ -217,8 +232,25 @@ class SimpleNetlink(object):
         else:
             raise ValueError(f"type {kwargs.get('type')} not implemented")
 
-    def ensure_interface_exists(self, interface, **kwargs):
+    def _resolve_interface_type_by_index(self,idx):
+        info={}
+        from pprint import pprint
+        for attr in self.ipr.link("get", index=idx)[0]['attrs']:
+            print(attr[0])
+            if attr[0] == "IFLA_LINKINFO":
+                for inner_attr in attr[1]["attrs"]:
+                    if inner_attr[0] == "IFLA_INFO_KIND":
+                        info['type']=inner_attr[1]
+                    if info['type'] == 'vlan' and inner_attr[0] == "IFLA_INFO_DATA":
+                        for ii in inner_attr[1]['attrs']:
+                            if ii[0] == "IFLA_VLAN_ID":
+                                info['vlan_id']=ii[1]
+                break
+        return info
 
+
+    def ensure_interface_exists(self, interface, **kwargs):
+        self.reset()
         namespace, idx = self.find_interface_in_all_namespaces(interface)
         if idx:
             if kwargs.get("namespace") != namespace:
@@ -237,6 +269,13 @@ class SimpleNetlink(object):
                     self.ipr.link("set", index=idx, net_ns_pid=1)
                     self.set_current_namespace(None)
                     self.interface_up(interface)
+            interface_info=self._resolve_interface_type_by_index(idx)
+            if kwargs.get('type'):
+                if interface_info.get('type') != kwargs.get('type'):
+                    self.delete_interface()
+                    raise ValueError("Cannot change interface type. please delete the interface and recreate with new configuration")
+            print(interface_info)
+
         else:
             if kwargs.get("type") in self._supported_virtual_interface_types:
                 self._log.debug(
@@ -247,7 +286,7 @@ class SimpleNetlink(object):
                 raise ValueError(
                     f"either physical interface just doesn't exist (typo?) or virtual type {kwargs.get('type')} is not supported"
                 )
-
+        
         for ipv4_config_item in kwargs.get("ipv4", []):
             self.interface_add_ipv4(interface, ipv4_config_item)
 

@@ -248,6 +248,30 @@ class SimpleNetlink(object):
                 break
         return info
 
+    def get_interface_ip(self, interface, **kwargs):
+        namespace, idx = self.find_interface_in_all_namespaces(interface)
+        retval={
+            'ipv4':[],
+            'ipv6':[]
+        }
+
+        for entry in self.ipr.get_addr(index=idx):
+
+            for attr in entry['attrs']:
+                if attr[0] == "IFA_ADDRESS":
+                    if entry["family"] == 2:
+                        retval['ipv4'].append(f"{attr[1]}/{entry['prefixlen']}")
+                    if entry["family"] == 10:
+                        retval['ipv6'].append(f"{attr[1]}/{entry['prefixlen']}")
+                break
+
+        return retval
+
+    def get_interface_ipv4(self,interface):
+        return self.get_interface_ip(interface)['ipv4']
+
+    def get_interface_ipv6(self,interface):
+        return self.get_interface_ip(interface)['ipv6']
 
     def ensure_interface_exists(self, interface, **kwargs):
         self.reset()
@@ -287,8 +311,18 @@ class SimpleNetlink(object):
                     f"either physical interface just doesn't exist (typo?) or virtual type {kwargs.get('type')} is not supported"
                 )
         
+        v4_diff_list=self.get_interface_ipv4(interface)
+
         for ipv4_config_item in kwargs.get("ipv4", []):
             self.interface_add_ipv4(interface, ipv4_config_item)
+            if ipv4_config_item in v4_diff_list:
+                v4_diff_list.remove(ipv4_config_item)
+        if v4_diff_list:
+            self._log.debug(
+                    f'interface {interface} has dangling ipv4 addresses {v4_diff_list}'
+                )
+            for ip in v4_diff_list:
+                self.interface_delete_ipv4(interface,ip)
 
         return (namespace, idx)
 

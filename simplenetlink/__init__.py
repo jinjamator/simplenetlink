@@ -234,9 +234,7 @@ class SimpleNetlink(object):
 
     def _resolve_interface_type_by_index(self,idx):
         info={}
-        from pprint import pprint
         for attr in self.ipr.link("get", index=idx)[0]['attrs']:
-            print(attr[0])
             if attr[0] == "IFLA_LINKINFO":
                 for inner_attr in attr[1]["attrs"]:
                     if inner_attr[0] == "IFLA_INFO_KIND":
@@ -247,6 +245,11 @@ class SimpleNetlink(object):
                                 info['vlan_id']=ii[1]
                 break
         return info
+
+    def get_interface_mtu(self):
+        for attr in self.ipr.link("get", index=idx)[0]['attrs']:
+            if attr[0] == "IFLA_MTU":
+                return attr[1]
 
     def get_interface_ip(self, interface, **kwargs):
         namespace, idx = self.find_interface_in_all_namespaces(interface)
@@ -293,11 +296,15 @@ class SimpleNetlink(object):
                     self.ipr.link("set", index=idx, net_ns_pid=1)
                     self.set_current_namespace(None)
                     self.interface_up(interface)
+            
             interface_info=self._resolve_interface_type_by_index(idx)
             if kwargs.get('type'):
                 if interface_info.get('type') != kwargs.get('type'):
                     self.delete_interface()
                     raise ValueError("Cannot change interface type. please delete the interface and recreate with new configuration")
+            
+            if kwargs.get("mtu"):
+                self.ipr.link("set", index=idx, mtu=kwargs.get("mtu"))
             
 
         else:
@@ -323,6 +330,8 @@ class SimpleNetlink(object):
                 )
             for ip in v4_diff_list:
                 self.interface_delete_ipv4(interface,ip)
+        
+
 
         return (namespace, idx)
 

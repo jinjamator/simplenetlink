@@ -306,6 +306,16 @@ class SimpleNetlink(object):
             if kwargs.get("mtu"):
                 self.ipr.link("set", index=idx, mtu=kwargs.get("mtu"))
             
+            
+            if kwargs.get("link_state") in ["up","down"]:
+                if kwargs.get("link_state") == "up":
+                    self.interface_up(interface)
+                else:
+                    self.interface_down(interface)
+            elif kwargs.get("link_state") == None:
+                pass
+            else:
+                raise ValueError(f"{kwargs['link_state']} is not a valid link state. Valid link_state values up,down")
 
         else:
             if kwargs.get("type") in self._supported_virtual_interface_types:

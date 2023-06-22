@@ -274,7 +274,7 @@ class SimpleNetlink(object):
                 if interface_info.get('type') != kwargs.get('type'):
                     self.delete_interface()
                     raise ValueError("Cannot change interface type. please delete the interface and recreate with new configuration")
-            print(interface_info)
+            
 
         else:
             if kwargs.get("type") in self._supported_virtual_interface_types:

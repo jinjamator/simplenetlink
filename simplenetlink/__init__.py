@@ -253,6 +253,7 @@ class SimpleNetlink(object):
 
     def get_interface_ip(self, interface, **kwargs):
         namespace, idx = self.find_interface_in_all_namespaces(interface)
+        self.set_current_namespace(namespace)
         retval={
             'ipv4':[],
             'ipv6':[]
@@ -279,6 +280,8 @@ class SimpleNetlink(object):
     def ensure_interface_exists(self, interface, **kwargs):
         self.reset()
         namespace, idx = self.find_interface_in_all_namespaces(interface)
+        self.set_current_namespace(namespace)
+
         if idx:
             if kwargs.get("namespace") != namespace:
                 self._log.debug(

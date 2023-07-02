@@ -19,7 +19,8 @@ class SimpleNetlink(object):
         self._current_namespace = None
         self._previous_namespace_instance = None
         self._previous_namespace = None
-        self.ipr.close()
+        if self.ipr:
+            self.ipr.close()
         self.ipr= IPRoute()
 
     def get_interface_index(self, ifname):
@@ -239,7 +240,9 @@ class SimpleNetlink(object):
                 for inner_attr in attr[1]["attrs"]:
                     if inner_attr[0] == "IFLA_INFO_KIND":
                         info['type']=inner_attr[1]
-                    if info['type'] == 'vlan' and inner_attr[0] == "IFLA_INFO_DATA":
+                        if info['type']=="vlan":
+                            info['type']="tagged"
+                    if info['type'] == 'tagged' and inner_attr[0] == "IFLA_INFO_DATA":
                         for ii in inner_attr[1]['attrs']:
                             if ii[0] == "IFLA_VLAN_ID":
                                 info['vlan_id']=ii[1]
@@ -302,6 +305,7 @@ class SimpleNetlink(object):
             
             interface_info=self._resolve_interface_type_by_index(idx)
             if kwargs.get('type'):
+
                 if interface_info.get('type') != kwargs.get('type'):
                     self.delete_interface()
                     raise ValueError("Cannot change interface type. please delete the interface and recreate with new configuration")

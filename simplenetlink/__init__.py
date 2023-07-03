@@ -82,10 +82,25 @@ class SimpleNetlink(object):
         return True
 
     def delete_namespace(self, namespace):
+        
+        
+
         if namespace in self.get_namespaces():
-            ns = NetNS(namespace)
-            ns.close()
-            ns.remove()
+            self.set_current_namespace(namespace)
+            for interface_name,interface_cfg in self.get_network_interfaces_info().items():
+                for ipv4 in interface_cfg.get("ipv4",[]):
+                    self.interface_delete_ipv4(interface_name, ipv4['prefix'])
+                for ipv6 in interface_cfg.get("ipv6",[]):
+                    self.interface_delete_ipv4(interface_name, ipv6['prefix'])
+            self.ipr.close()
+            self.ipr.remove()
+            self.restore_previous_namespace()
+
+            # ns = NetNS(namespace)
+            
+
+            # ns.close()
+            # ns.remove()
 
             self._log.debug(f"removed namespace {namespace}")
             if namespace == self._current_namespace:
@@ -284,7 +299,7 @@ class SimpleNetlink(object):
         self.reset()
         namespace, idx = self.find_interface_in_all_namespaces(interface)
         self.set_current_namespace(namespace)
-
+        
         if idx:
             if kwargs.get("namespace") != namespace:
                 self._log.debug(
@@ -481,6 +496,7 @@ class SimpleNetlink(object):
                     {
                         "prefix_length": addr["prefixlen"],
                         "address": addr.get_attr("IFA_ADDRESS"),
+                        'prefix': f'{addr.get_attr("IFA_ADDRESS")}/{addr["prefixlen"]}'
                     }
                 )
             for addr in self.ipr.get_addr(
@@ -490,6 +506,7 @@ class SimpleNetlink(object):
                     {
                         "prefix_length": addr["prefixlen"],
                         "address": addr.get_attr("IFA_ADDRESS"),
+                        'prefix': f'{addr.get_attr("IFA_ADDRESS")}/{addr["prefixlen"]}'
                     }
                 )
             results[link.get_attr("IFLA_IFNAME")] = {

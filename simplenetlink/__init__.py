@@ -14,14 +14,13 @@ class SimpleNetlink(object):
         self._log.level = logging.DEBUG
         self._supported_virtual_interface_types = ["ipvlan", "tagged"]
 
-
     def reset(self):
         self._current_namespace = None
         self._previous_namespace_instance = None
         self._previous_namespace = None
         if self.ipr:
             self.ipr.close()
-        self.ipr= IPRoute()
+        self.ipr = IPRoute()
 
     def get_interface_index(self, ifname):
         res = self.ipr.link_lookup(ifname=ifname)
@@ -82,22 +81,21 @@ class SimpleNetlink(object):
         return True
 
     def delete_namespace(self, namespace):
-        
-        
-
         if namespace in self.get_namespaces():
             self.set_current_namespace(namespace)
-            for interface_name,interface_cfg in self.get_network_interfaces_info().items():
-                for ipv4 in interface_cfg.get("ipv4",[]):
-                    self.interface_delete_ipv4(interface_name, ipv4['prefix'])
-                for ipv6 in interface_cfg.get("ipv6",[]):
-                    self.interface_delete_ipv4(interface_name, ipv6['prefix'])
+            for (
+                interface_name,
+                interface_cfg,
+            ) in self.get_network_interfaces_info().items():
+                for ipv4 in interface_cfg.get("ipv4", []):
+                    self.interface_delete_ipv4(interface_name, ipv4["prefix"])
+                for ipv6 in interface_cfg.get("ipv6", []):
+                    self.interface_delete_ipv4(interface_name, ipv6["prefix"])
             self.ipr.close()
             self.ipr.remove()
             self.restore_previous_namespace()
 
             # ns = NetNS(namespace)
-            
 
             # ns.close()
             # ns.remove()
@@ -145,7 +143,7 @@ class SimpleNetlink(object):
             self._log.debug(f"cannot find interface {interface_name} in any namespace")
         return (namespace, idx)
 
-    def __create_tagged(self, interface_name,options={}, **kwargs):
+    def __create_tagged(self, interface_name, options={}, **kwargs):
         if kwargs.get("parent_interface"):
             (base_namespace, base_idx) = self.find_interface_in_all_namespaces(
                 kwargs.get("parent_interface")
@@ -170,7 +168,7 @@ class SimpleNetlink(object):
                 kind="vlan",
                 link=base_idx,
                 vlan_id=int(kwargs.get("vlan_id")),
-                **options
+                **options,
             )
             idx = self.get_interface_index(interface_name)
             namespace = kwargs.get("namespace")
@@ -209,8 +207,7 @@ class SimpleNetlink(object):
                 ipvlan_mode=ipvlan_modes[
                     "l2"
                 ],  # l2 mode so arp can be handled from namespace
-                **options
-                
+                **options,
             )
             idx = self.get_interface_index(interface_name)
             namespace = kwargs.get("namespace")
@@ -230,9 +227,9 @@ class SimpleNetlink(object):
             )
 
     def create_interface(self, interface_name, **kwargs):
-        options={}
+        options = {}
         if kwargs.get("mtu"):
-            options["mtu"]=kwargs.get("mtu")
+            options["mtu"] = kwargs.get("mtu")
 
         f = getattr(self, f"_SimpleNetlink__create_{kwargs.get('type')}")
         if f:
@@ -248,58 +245,54 @@ class SimpleNetlink(object):
         else:
             raise ValueError(f"type {kwargs.get('type')} not implemented")
 
-    def _resolve_interface_type_by_index(self,idx):
-        info={}
-        for attr in self.ipr.link("get", index=idx)[0]['attrs']:
+    def _resolve_interface_type_by_index(self, idx):
+        info = {}
+        for attr in self.ipr.link("get", index=idx)[0]["attrs"]:
             if attr[0] == "IFLA_LINKINFO":
                 for inner_attr in attr[1]["attrs"]:
                     if inner_attr[0] == "IFLA_INFO_KIND":
-                        info['type']=inner_attr[1]
-                        if info['type']=="vlan":
-                            info['type']="tagged"
-                    if info['type'] == 'tagged' and inner_attr[0] == "IFLA_INFO_DATA":
-                        for ii in inner_attr[1]['attrs']:
+                        info["type"] = inner_attr[1]
+                        if info["type"] == "vlan":
+                            info["type"] = "tagged"
+                    if info["type"] == "tagged" and inner_attr[0] == "IFLA_INFO_DATA":
+                        for ii in inner_attr[1]["attrs"]:
                             if ii[0] == "IFLA_VLAN_ID":
-                                info['vlan_id']=ii[1]
+                                info["vlan_id"] = ii[1]
                 break
         return info
 
     def get_interface_mtu(self):
-        for attr in self.ipr.link("get", index=idx)[0]['attrs']:
+        for attr in self.ipr.link("get", index=idx)[0]["attrs"]:
             if attr[0] == "IFLA_MTU":
                 return attr[1]
 
     def get_interface_ip(self, interface, **kwargs):
         namespace, idx = self.find_interface_in_all_namespaces(interface)
         self.set_current_namespace(namespace)
-        retval={
-            'ipv4':[],
-            'ipv6':[]
-        }
+        retval = {"ipv4": [], "ipv6": []}
 
         for entry in self.ipr.get_addr(index=idx):
-
-            for attr in entry['attrs']:
+            for attr in entry["attrs"]:
                 if attr[0] == "IFA_ADDRESS":
                     if entry["family"] == 2:
-                        retval['ipv4'].append(f"{attr[1]}/{entry['prefixlen']}")
+                        retval["ipv4"].append(f"{attr[1]}/{entry['prefixlen']}")
                     if entry["family"] == 10:
-                        retval['ipv6'].append(f"{attr[1]}/{entry['prefixlen']}")
+                        retval["ipv6"].append(f"{attr[1]}/{entry['prefixlen']}")
                 break
 
         return retval
 
-    def get_interface_ipv4(self,interface):
-        return self.get_interface_ip(interface)['ipv4']
+    def get_interface_ipv4(self, interface):
+        return self.get_interface_ip(interface)["ipv4"]
 
-    def get_interface_ipv6(self,interface):
-        return self.get_interface_ip(interface)['ipv6']
+    def get_interface_ipv6(self, interface):
+        return self.get_interface_ip(interface)["ipv6"]
 
     def ensure_interface_exists(self, interface, **kwargs):
         self.reset()
         namespace, idx = self.find_interface_in_all_namespaces(interface)
         self.set_current_namespace(namespace)
-        
+
         if idx:
             if kwargs.get("namespace") != namespace:
                 self._log.debug(
@@ -317,19 +310,19 @@ class SimpleNetlink(object):
                     self.ipr.link("set", index=idx, net_ns_pid=1)
                     self.set_current_namespace(None)
                     self.interface_up(interface)
-            
-            interface_info=self._resolve_interface_type_by_index(idx)
-            if kwargs.get('type'):
 
-                if interface_info.get('type') != kwargs.get('type'):
+            interface_info = self._resolve_interface_type_by_index(idx)
+            if kwargs.get("type"):
+                if interface_info.get("type") != kwargs.get("type"):
                     self.delete_interface()
-                    raise ValueError("Cannot change interface type. please delete the interface and recreate with new configuration")
-            
+                    raise ValueError(
+                        "Cannot change interface type. please delete the interface and recreate with new configuration"
+                    )
+
             if kwargs.get("mtu"):
                 self.ipr.link("set", index=idx, mtu=kwargs.get("mtu"))
-            
-            
-            if kwargs.get("link_state") in ["up","down"]:
+
+            if kwargs.get("link_state") in ["up", "down"]:
                 if kwargs.get("link_state") == "up":
                     self.interface_up(interface)
                 else:
@@ -337,7 +330,9 @@ class SimpleNetlink(object):
             elif kwargs.get("link_state") == None:
                 pass
             else:
-                raise ValueError(f"{kwargs['link_state']} is not a valid link state. Valid link_state values up,down")
+                raise ValueError(
+                    f"{kwargs['link_state']} is not a valid link state. Valid link_state values up,down"
+                )
 
         else:
             if kwargs.get("type") in self._supported_virtual_interface_types:
@@ -349,8 +344,8 @@ class SimpleNetlink(object):
                 raise ValueError(
                     f"either physical interface just doesn't exist (typo?) or virtual type {kwargs.get('type')} is not supported"
                 )
-        
-        v4_diff_list=self.get_interface_ipv4(interface)
+
+        v4_diff_list = self.get_interface_ipv4(interface)
 
         for ipv4_config_item in kwargs.get("ipv4", []):
             self.interface_add_ipv4(interface, ipv4_config_item)
@@ -358,12 +353,10 @@ class SimpleNetlink(object):
                 v4_diff_list.remove(ipv4_config_item)
         if v4_diff_list:
             self._log.debug(
-                    f'interface {interface} has dangling ipv4 addresses {v4_diff_list}'
-                )
+                f"interface {interface} has dangling ipv4 addresses {v4_diff_list}"
+            )
             for ip in v4_diff_list:
-                self.interface_delete_ipv4(interface,ip)
-        
-
+                self.interface_delete_ipv4(interface, ip)
 
         return (namespace, idx)
 
@@ -415,7 +408,7 @@ class SimpleNetlink(object):
         )
         return True
 
-    def interface_up(self,interface_name):
+    def interface_up(self, interface_name):
         idx = self.get_interface_index(interface_name)
         if not idx:
             raise ValueError(
@@ -423,7 +416,7 @@ class SimpleNetlink(object):
             )
         self.ipr.link("set", index=idx, state="up")
 
-    def interface_down(self,interface_name):
+    def interface_down(self, interface_name):
         idx = self.get_interface_index(interface_name)
         if not idx:
             raise ValueError(
@@ -432,31 +425,27 @@ class SimpleNetlink(object):
         self.ipr.link("set", index=idx, state="down")
 
     def get_routes(self):
-        retval = {
-            'static':{},
-            'dynamic':{},
-            'local':{}
-        }
+        retval = {"static": {}, "dynamic": {}, "local": {}}
         for route in self.ipr.route("show", type=1):
-            if route.get_attr('RTA_GATEWAY'):
-                dest = route.get_attr('RTA_DST')
+            if route.get_attr("RTA_GATEWAY"):
+                dest = route.get_attr("RTA_DST")
                 if dest:
-                    dest=f"{dest}/{route.get('dst_len')}"
+                    dest = f"{dest}/{route.get('dst_len')}"
                 else:
-                    dest='default'
-                if dest not in retval['static']:
-                    retval['static'][dest]=[]
-                retval['static'][dest].append(route.get_attr('RTA_GATEWAY'))
-            elif route.get_attr('RTA_PREFSRC'):
+                    dest = "default"
+                if dest not in retval["static"]:
+                    retval["static"][dest] = []
+                retval["static"][dest].append(route.get_attr("RTA_GATEWAY"))
+            elif route.get_attr("RTA_PREFSRC"):
                 dest = f"{route.get_attr('RTA_DST')}/{route.get('dst_len')}"
-                if dest not in retval['local']:
-                    retval['local'][dest]=[]
-                retval['local'][dest].append(f"{route.get_attr('RTA_PREFSRC')}")
+                if dest not in retval["local"]:
+                    retval["local"][dest] = []
+                retval["local"][dest].append(f"{route.get_attr('RTA_PREFSRC')}")
             else:
-                raise ValueError(f'Never come here, if so something is really wrong. {route}')
+                raise ValueError(
+                    f"Never come here, if so something is really wrong. {route}"
+                )
         return retval
-
-
 
     def add_route(self, prefix, nexthop):
         try:
@@ -496,7 +485,7 @@ class SimpleNetlink(object):
                     {
                         "prefix_length": addr["prefixlen"],
                         "address": addr.get_attr("IFA_ADDRESS"),
-                        'prefix': f'{addr.get_attr("IFA_ADDRESS")}/{addr["prefixlen"]}'
+                        "prefix": f'{addr.get_attr("IFA_ADDRESS")}/{addr["prefixlen"]}',
                     }
                 )
             for addr in self.ipr.get_addr(
@@ -506,7 +495,7 @@ class SimpleNetlink(object):
                     {
                         "prefix_length": addr["prefixlen"],
                         "address": addr.get_attr("IFA_ADDRESS"),
-                        'prefix': f'{addr.get_attr("IFA_ADDRESS")}/{addr["prefixlen"]}'
+                        "prefix": f'{addr.get_attr("IFA_ADDRESS")}/{addr["prefixlen"]}',
                     }
                 )
             results[link.get_attr("IFLA_IFNAME")] = {

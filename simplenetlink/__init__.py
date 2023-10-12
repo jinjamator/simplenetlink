@@ -476,10 +476,19 @@ class SimpleNetlink(object):
     def get_network_interfaces_info(self):
         results = {}
         for link in self.ipr.get_links():
+            interface_name=link.get_attr("IFLA_IFNAME")
+            interface_type=None
+            additional_parameters={}
+            if link.get_attr("IFLA_LINKINFO"):
+                if link.get_attr("IFLA_LINKINFO").get_attr("IFLA_INFO_KIND")=="vlan":                    
+                    additional_parameters["type"] = "tagged"
+                    additional_parameters["vlan_id"] = link.get_attr("IFLA_LINKINFO").get_attr("IFLA_INFO_DATA").get_attr("IFLA_VLAN_ID")
+                    additional_parameters["parent_interface"] = self.ipr.link('get', index=link.get_attr("IFLA_LINK"))[0].get_attr("IFLA_IFNAME")
+
             ipv4 = []
             ipv6 = []
             for addr in self.ipr.get_addr(
-                family=socket.AF_INET, label=link.get_attr("IFLA_IFNAME")
+                family=socket.AF_INET, label=interface_name
             ):
                 ipv4.append(
                     {
@@ -489,7 +498,7 @@ class SimpleNetlink(object):
                     }
                 )
             for addr in self.ipr.get_addr(
-                family=socket.AF_INET6, label=link.get_attr("IFLA_IFNAME")
+                family=socket.AF_INET6, label=interface_name
             ):
                 ipv6.append(
                     {
@@ -498,12 +507,13 @@ class SimpleNetlink(object):
                         "prefix": f'{addr.get_attr("IFA_ADDRESS")}/{addr["prefixlen"]}',
                     }
                 )
-            results[link.get_attr("IFLA_IFNAME")] = {
+            results[interface_name] = {
                 "link_state": link["state"].lower(),
                 "oper_state": link.get_attr("IFLA_OPERSTATE").lower(),
                 "mac_address": link.get_attr("IFLA_ADDRESS", "None").lower(),
                 "mtu": link.get_attr("IFLA_MTU"),
                 "ipv4": ipv4,
                 "ipv6": ipv6,
+                **additional_parameters
             }
         return results

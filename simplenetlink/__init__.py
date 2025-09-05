@@ -12,7 +12,7 @@ class SimpleNetlink(object):
         self._previous_namespace_instance = None
         self._previous_namespace = None
         self._log.level = logging.DEBUG
-        self._supported_virtual_interface_types = ["ipvlan", "tagged"]
+        self._supported_virtual_interface_types = ["ipvlan", "tagged", "tun"]
 
     def reset(self):
         self._current_namespace = None
@@ -225,6 +225,35 @@ class SimpleNetlink(object):
             raise ValueError(
                 f"parent_interface not specified for ipvlan interface {interface_name}"
             )
+
+    def __create_tun(self, interface_name, options={}, **kwargs):
+        return self.__create_tuntap(interface_name, options, **kwargs, mode="tun")
+
+    def __create_tap(self, interface_name, options={}, **kwargs):
+        return __create_tuntap(interface_name, options, **kwargs, mode="tap")
+
+    def __create_tuntap(self, interface_name, options={}, **kwargs):
+        self.ipr.link(
+            "add",
+            ifname=interface_name,
+            kind="tuntap",
+            mode=options.get("mode","tun"),
+            **options,
+        )
+        idx = self.get_interface_index(interface_name)
+        namespace = kwargs.get("namespace")
+        if namespace:
+            self.set_current_namespace(namespace)
+            self.set_current_namespace(base_namespace)
+            self.ipr.link("set", index=idx, net_ns_fd=kwargs.get("namespace"))
+            self.set_current_namespace(namespace)
+        else:
+            self.ipr.link("set", index=idx, net_ns_pid=1)
+            self.set_current_namespace(None)
+        idx = self.get_interface_index(interface_name)
+        return (namespace, idx)
+    
+       
 
     def create_interface(self, interface_name, **kwargs):
         options = {}

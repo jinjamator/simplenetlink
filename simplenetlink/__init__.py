@@ -90,7 +90,7 @@ class SimpleNetlink(object):
                 for ipv4 in interface_cfg.get("ipv4", []):
                     self.interface_delete_ipv4(interface_name, ipv4["prefix"])
                 for ipv6 in interface_cfg.get("ipv6", []):
-                    self.interface_delete_ipv4(interface_name, ipv6["prefix"])
+                    self.interface_delete_ipv6(interface_name, ipv6["prefix"])
             self.ipr.close()
             self.ipr.remove()
             self.restore_previous_namespace()
@@ -387,6 +387,19 @@ class SimpleNetlink(object):
             for ip in v4_diff_list:
                 self.interface_delete_ipv4(interface, ip)
 
+        v6_diff_list = self.get_interface_ipv6(interface)
+
+        for ipv6_config_item in kwargs.get("ipv6", []):
+            self.interface_add_ipv6(interface, ipv6_config_item)
+            if ipv6_config_item in v6_diff_list:
+                v6_diff_list.remove(ipv6_config_item)
+        if v6_diff_list:
+            self._log.debug(
+                f"interface {interface} has dangling ipv6 addresses {v6_diff_list}"
+            )
+            for ip in v6_diff_list:
+                self.interface_delete_ipv6(interface, ip)
+
         return (namespace, idx)
 
     def interface_add_ipv4(self, interface_name, prefix):
@@ -434,6 +447,66 @@ class SimpleNetlink(object):
                 raise (e)
         self._log.debug(
             f"setting ipv4_address {prefix} on {interface_name} in namespace {self._current_namespace}"
+        )
+        return True
+
+    def interface_add_ipv6(self, interface_name, prefix):
+        idx = self.get_interface_index(interface_name)
+        if not idx:
+            raise ValueError(
+                f"interface {interface_name} not found in namespace {self._current_namespace}"
+            )
+        address, prefix_len = prefix.strip().split("/")
+        prefix_len = int(prefix_len)
+        try:
+            self.ipr.addr(
+                "add",
+                index=idx,
+                address=address,
+                prefixlen=prefix_len,
+                family=socket.AF_INET6,
+            )
+        except netlink.exceptions.NetlinkError as e:
+            if e.code == 98 or e.code == 17:
+                self._log.debug(
+                    f"prefix {prefix} already in use in namespace {self._current_namespace} -> ignoring request"
+                )
+                self._log.debug(e)
+                return True
+            else:
+                raise (e)
+        self._log.debug(
+            f"setting ipv6_address {prefix} on {interface_name} in namespace {self._current_namespace}"
+        )
+        return True
+
+    def interface_delete_ipv6(self, interface_name, prefix):
+        idx = self.get_interface_index(interface_name)
+        if not idx:
+            raise ValueError(
+                f"interface {interface_name} not found in namespace {self._current_namespace}"
+            )
+        address, prefix_len = prefix.strip().split("/")
+        prefix_len = int(prefix_len)
+        try:
+            self.ipr.addr(
+                "del",
+                index=idx,
+                address=address,
+                prefixlen=prefix_len,
+                family=socket.AF_INET6,
+            )
+        except netlink.exceptions.NetlinkError as e:
+            if e.code == 98 or e.code == 17:
+                self._log.debug(
+                    f"prefix {prefix} already not present in namespace {self._current_namespace} -> ignoring request"
+                )
+                self._log.debug(e)
+                return True
+            else:
+                raise (e)
+        self._log.debug(
+            f"deleting ipv6_address {prefix} on {interface_name} in namespace {self._current_namespace}"
         )
         return True
 

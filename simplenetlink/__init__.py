@@ -509,10 +509,20 @@ class SimpleNetlink(object):
             interface_type=None
             additional_parameters={}
             if link.get_attr("IFLA_LINKINFO"):
-                if link.get_attr("IFLA_LINKINFO").get_attr("IFLA_INFO_KIND")=="vlan":                    
+                _kind = link.get_attr("IFLA_LINKINFO").get_attr("IFLA_INFO_KIND")
+                if _kind == "vlan":
                     additional_parameters["type"] = "tagged"
                     additional_parameters["vlan_id"] = link.get_attr("IFLA_LINKINFO").get_attr("IFLA_INFO_DATA").get_attr("IFLA_VLAN_ID")
                     additional_parameters["parent_interface"] = self.ipr.link('get', index=link.get_attr("IFLA_LINK"))[0].get_attr("IFLA_IFNAME")
+                elif _kind == "ipvlan":
+                    additional_parameters["type"] = "ipvlan"
+                    parent_idx = link.get_attr("IFLA_LINK")
+                    if parent_idx:
+                        try:
+                            with IPRoute() as _root:
+                                additional_parameters["parent_interface"] = _root.link('get', index=parent_idx)[0].get_attr("IFLA_IFNAME")
+                        except Exception:
+                            pass
 
             ipv4 = []
             ipv6 = []

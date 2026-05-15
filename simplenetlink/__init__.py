@@ -523,6 +523,13 @@ class SimpleNetlink(object):
                                 additional_parameters["parent_interface"] = _root.link('get', index=parent_idx)[0].get_attr("IFLA_IFNAME")
                         except Exception:
                             pass
+                elif _kind == "tun":
+                    try:
+                        info_data = link.get_attr("IFLA_LINKINFO").get_attr("IFLA_INFO_DATA")
+                        tun_type = info_data.get_attr("IFLA_TUN_TYPE") if info_data else None
+                        additional_parameters["type"] = "tap" if tun_type == 2 else "tun"
+                    except Exception:
+                        additional_parameters["type"] = "tun"
 
             ipv4 = []
             ipv6 = []

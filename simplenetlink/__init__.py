@@ -83,14 +83,21 @@ class SimpleNetlink(object):
     def delete_namespace(self, namespace):
         if namespace in self.get_namespaces():
             self.set_current_namespace(namespace)
-            for (
-                interface_name,
-                interface_cfg,
-            ) in self.get_network_interfaces_info().items():
+            for interface_name, interface_cfg in self.get_network_interfaces_info().items():
+                if interface_name == "lo":
+                    continue
                 for ipv4 in interface_cfg.get("ipv4", []):
                     self.interface_delete_ipv4(interface_name, ipv4["prefix"])
                 for ipv6 in interface_cfg.get("ipv6", []):
                     self.interface_delete_ipv6(interface_name, ipv6["prefix"])
+                iface_type = interface_cfg.get("type")
+                if iface_type in ("tagged", "ipvlan", "tun", "tap"):
+                    try:
+                        idx = self.get_interface_index(interface_name)
+                        self.ipr.link("del", index=idx)
+                        self._log.debug(f"deleted {iface_type} interface {interface_name} from {namespace}")
+                    except Exception as e:
+                        self._log.debug(f"could not delete interface {interface_name}: {e}")
             self.ipr.close()
             self.ipr.remove()
             self.restore_previous_namespace()
@@ -118,30 +125,31 @@ class SimpleNetlink(object):
         return list(netns.listnetns())
 
     def find_interface_in_all_namespaces(self, interface_name):
-        idx = None
-        namespace = self.get_current_namespace_name()
-        try:
-            self.set_current_namespace(None)
-            idx = self.get_interface_index(interface_name)
-            namespace = self.get_current_namespace_name()
-            self.restore_previous_namespace()
-        except ValueError:
-            for namespace in self.get_namespaces():
-                self._log.debug(f"switching namespace to {namespace}")
-                self.set_current_namespace(namespace)
-                try:
-                    idx = self.get_interface_index(interface_name)
-                    break
-                except:
-                    pass
-                self.restore_previous_namespace()
-        if idx:
-            self._log.debug(
-                f"found interface {interface_name} in namespace {namespace} with index {idx}"
-            )
-        else:
-            self._log.debug(f"cannot find interface {interface_name} in any namespace")
-        return (namespace, idx)
+        # Use independent IPRoute/NetNS instances so the search never corrupts self.ipr state.
+        # Callers always call set_current_namespace(namespace) on the returned value before use.
+        with IPRoute() as root:
+            res = root.link_lookup(ifname=interface_name)
+            if res:
+                self._log.debug(
+                    f"found interface {interface_name} in namespace None with index {res[0]}"
+                )
+                return (None, res[0])
+
+        for ns in self.get_namespaces():
+            self._log.debug(f"switching namespace to {ns}")
+            try:
+                with NetNS(ns) as ns_ipr:
+                    res = ns_ipr.link_lookup(ifname=interface_name)
+                    if res:
+                        self._log.debug(
+                            f"found interface {interface_name} in namespace {ns} with index {res[0]}"
+                        )
+                        return (ns, res[0])
+            except Exception:
+                pass
+
+        self._log.debug(f"cannot find interface {interface_name} in any namespace")
+        return (self.get_current_namespace_name(), None)
 
     def __create_tagged(self, interface_name, options={}, **kwargs):
         if kwargs.get("parent_interface"):
@@ -162,6 +170,8 @@ class SimpleNetlink(object):
 
             self.set_current_namespace(base_namespace)
 
+            # EEXIST (17) here with no visible interface in any namespace indicates stale
+            # 8021q kernel state after a prior netns move; fix: modprobe -r 8021q && modprobe 8021q
             self.ipr.link(
                 "add",
                 ifname=interface_name,
@@ -526,9 +536,20 @@ class SimpleNetlink(object):
             )
         self.ipr.link("set", index=idx, state="down")
 
+    def delete_interface(self, interface_name):
+        idx = self.get_interface_index(interface_name)
+        self.ipr.link("del", index=idx)
+        self._log.debug(f"deleted interface {interface_name} from namespace {self._current_namespace}")
+
+    def move_interface_to_root(self, interface_name):
+        idx = self.get_interface_index(interface_name)
+        self.ipr.link("set", index=idx, net_ns_pid=1)
+        self._log.debug(f"moved interface {interface_name} from {self._current_namespace} to root namespace")
+
     def get_routes(self):
+        import socket
         retval = {"static": {}, "dynamic": {}, "local": {}}
-        for route in self.ipr.route("show", type=1):
+        for route in self.ipr.route("show", type=1, family=socket.AF_INET):
             if route.get_attr("RTA_GATEWAY"):
                 dest = route.get_attr("RTA_DST")
                 if dest:
@@ -544,9 +565,7 @@ class SimpleNetlink(object):
                     retval["local"][dest] = []
                 retval["local"][dest].append(f"{route.get_attr('RTA_PREFSRC')}")
             else:
-                raise ValueError(
-                    f"Never come here, if so something is really wrong. {route}"
-                )
+                self._log.debug(f"skipping route with no gateway or prefsrc: {route}")
         return retval
 
     def add_route(self, prefix, nexthop):
@@ -586,7 +605,13 @@ class SimpleNetlink(object):
                 if _kind == "vlan":
                     additional_parameters["type"] = "tagged"
                     additional_parameters["vlan_id"] = link.get_attr("IFLA_LINKINFO").get_attr("IFLA_INFO_DATA").get_attr("IFLA_VLAN_ID")
-                    additional_parameters["parent_interface"] = self.ipr.link('get', index=link.get_attr("IFLA_LINK"))[0].get_attr("IFLA_IFNAME")
+                    parent_idx = link.get_attr("IFLA_LINK")
+                    if parent_idx:
+                        try:
+                            with IPRoute() as _root:
+                                additional_parameters["parent_interface"] = _root.link('get', index=parent_idx)[0].get_attr("IFLA_IFNAME")
+                        except Exception:
+                            pass
                 elif _kind == "ipvlan":
                     additional_parameters["type"] = "ipvlan"
                     parent_idx = link.get_attr("IFLA_LINK")

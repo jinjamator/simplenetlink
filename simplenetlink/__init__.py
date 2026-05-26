@@ -12,7 +12,7 @@ class SimpleNetlink(object):
         self._previous_namespace_instance = None
         self._previous_namespace = None
         self._log.level = logging.DEBUG
-        self._supported_virtual_interface_types = ["ipvlan", "tagged", "tun"]
+        self._supported_virtual_interface_types = ["ipvlan", "macvlan", "tagged", "tun"]
 
     def reset(self):
         self._current_namespace = None
@@ -235,6 +235,45 @@ class SimpleNetlink(object):
             raise ValueError(
                 f"parent_interface not specified for ipvlan interface {interface_name}"
             )
+
+    def __create_macvlan(self, interface_name, options={}, **kwargs):
+        macvlan_modes = {
+            "bridge": 4,
+            "passthru": 8,
+            "private": 1,
+            "vepa": 2,
+        }
+        if not kwargs.get("parent_interface"):
+            raise ValueError(
+                f"parent_interface not specified for macvlan interface {interface_name}"
+            )
+        (base_namespace, base_idx) = self.find_interface_in_all_namespaces(
+            kwargs.get("parent_interface")
+        )
+        self._log.debug(f"found parent_interface in namespace {base_namespace}")
+        self.set_current_namespace(base_namespace)
+
+        mode = kwargs.get("macvlan_mode", "bridge")
+        self.ipr.link(
+            "add",
+            ifname=interface_name,
+            kind="macvlan",
+            link=base_idx,
+            macvlan_mode=macvlan_modes.get(mode, macvlan_modes["bridge"]),
+            **options,
+        )
+        idx = self.get_interface_index(interface_name)
+        namespace = kwargs.get("namespace")
+        if namespace:
+            self.set_current_namespace(namespace)
+            self.set_current_namespace(base_namespace)
+            self.ipr.link("set", index=idx, net_ns_fd=kwargs.get("namespace"))
+            self.set_current_namespace(namespace)
+        else:
+            self.ipr.link("set", index=idx, net_ns_pid=1)
+            self.set_current_namespace(None)
+        idx = self.get_interface_index(interface_name)
+        return (namespace, idx)
 
     def __create_tun(self, interface_name, options={}, **kwargs):
         return self.__create_tuntap(interface_name, options, **kwargs, mode="tun")
@@ -614,6 +653,15 @@ class SimpleNetlink(object):
                             pass
                 elif _kind == "ipvlan":
                     additional_parameters["type"] = "ipvlan"
+                    parent_idx = link.get_attr("IFLA_LINK")
+                    if parent_idx:
+                        try:
+                            with IPRoute() as _root:
+                                additional_parameters["parent_interface"] = _root.link('get', index=parent_idx)[0].get_attr("IFLA_IFNAME")
+                        except Exception:
+                            pass
+                elif _kind == "macvlan":
+                    additional_parameters["type"] = "macvlan"
                     parent_idx = link.get_attr("IFLA_LINK")
                     if parent_idx:
                         try:

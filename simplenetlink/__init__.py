@@ -1,6 +1,7 @@
 from pyroute2 import IPRoute, netns, NetNS, netlink
 import socket
 import logging
+import subprocess
 import time
 
 
@@ -13,6 +14,7 @@ class SimpleNetlink(object):
         self._previous_namespace = None
         self._log.level = logging.DEBUG
         self._supported_virtual_interface_types = ["ipvlan", "macvlan", "tagged", "tun"]
+        self._dhcp_interfaces = set()   # set of (interface_name, namespace) tuples
 
     def reset(self):
         self._current_namespace = None
@@ -38,7 +40,8 @@ class SimpleNetlink(object):
                 return res[0]
 
     def create_namespace(self, namespace):
-        ns = netns.create(namespace)
+        if namespace not in self.get_namespaces():
+            netns.create(namespace)
 
         self.set_current_namespace(namespace)
         idx = self.get_interface_index("lo")
@@ -364,6 +367,52 @@ class SimpleNetlink(object):
     def get_interface_ipv6(self, interface):
         return self.get_interface_ip(interface)["ipv6"]
 
+    def _dhclient_pidfile(self, interface_name, namespace=None):
+        ns_tag = f"{namespace}-" if namespace else ""
+        return f"/run/dhclient-nettestbed-{ns_tag}{interface_name}.pid"
+
+    def _is_dhclient_running(self, interface_name, namespace=None):
+        """Check our explicit pidfile — reliable across process/worker restarts."""
+        try:
+            with open(self._dhclient_pidfile(interface_name, namespace)) as f:
+                pid = int(f.read().strip())
+            subprocess.run(["kill", "-0", str(pid)], check=True, capture_output=True)
+            return True
+        except Exception:
+            return False
+
+    def _shell_detached(self, cmd):
+        """Run via bash with & so bash is our only direct child (reaped by
+        subprocess.run) and dhclient is immediately reparented to init."""
+        import shlex
+        shell_cmd = " ".join(shlex.quote(a) for a in cmd)
+        subprocess.run(f"nohup {shell_cmd} >/dev/null 2>&1 &",
+                       shell=True, executable="/bin/bash")
+
+    def enable_dhcp(self, interface_name, namespace=None):
+        key = (interface_name, namespace)
+        if self._is_dhclient_running(interface_name, namespace):
+            self._log.debug(f"dhclient already running for {interface_name}, skipping")
+            self._dhcp_interfaces.add(key)
+            return
+        pidfile = self._dhclient_pidfile(interface_name, namespace)
+        cmd = ["dhclient", "-v", "-pf", pidfile, interface_name]
+        if namespace:
+            cmd = ["ip", "netns", "exec", namespace] + cmd
+        self._shell_detached(cmd)
+        self._dhcp_interfaces.add(key)
+        self._log.debug(f"started dhclient for {interface_name} in namespace {namespace or 'root'}")
+
+    def disable_dhcp(self, interface_name, namespace=None):
+        key = (interface_name, namespace)
+        pidfile = self._dhclient_pidfile(interface_name, namespace)
+        cmd = ["dhclient", "-x", "-pf", pidfile, interface_name]
+        if namespace:
+            cmd = ["ip", "netns", "exec", namespace] + cmd
+        self._shell_detached(cmd)
+        self._dhcp_interfaces.discard(key)
+        self._log.debug(f"stopped dhclient for {interface_name} in namespace {namespace or 'root'}")
+
     def ensure_interface_exists(self, interface, **kwargs):
         self.reset()
         namespace, idx = self.find_interface_in_all_namespaces(interface)
@@ -374,6 +423,7 @@ class SimpleNetlink(object):
                 self._log.debug(
                     f'interface is in namespace {namespace} -> moving to {kwargs.get("namespace")}'
                 )
+                self.disable_dhcp(interface, namespace)
 
                 if kwargs.get("namespace"):
                     self.set_current_namespace(kwargs.get("namespace"))
@@ -421,18 +471,24 @@ class SimpleNetlink(object):
                     f"either physical interface just doesn't exist (typo?) or virtual type {kwargs.get('type')} is not supported"
                 )
 
-        v4_diff_list = self.get_interface_ipv4(interface)
+        ipv4_list = kwargs.get("ipv4", [])
+        namespace = kwargs.get("namespace")
 
-        for ipv4_config_item in kwargs.get("ipv4", []):
-            self.interface_add_ipv4(interface, ipv4_config_item)
-            if ipv4_config_item in v4_diff_list:
-                v4_diff_list.remove(ipv4_config_item)
-        if v4_diff_list:
-            self._log.debug(
-                f"interface {interface} has dangling ipv4 addresses {v4_diff_list}"
-            )
-            for ip in v4_diff_list:
-                self.interface_delete_ipv4(interface, ip)
+        if "auto" in ipv4_list:
+            self.enable_dhcp(interface, namespace)
+        else:
+            self.disable_dhcp(interface, namespace)
+            v4_diff_list = self.get_interface_ipv4(interface)
+            for ipv4_config_item in ipv4_list:
+                self.interface_add_ipv4(interface, ipv4_config_item)
+                if ipv4_config_item in v4_diff_list:
+                    v4_diff_list.remove(ipv4_config_item)
+            if v4_diff_list:
+                self._log.debug(
+                    f"interface {interface} has dangling ipv4 addresses {v4_diff_list}"
+                )
+                for ip in v4_diff_list:
+                    self.interface_delete_ipv4(interface, ip)
 
         v6_diff_list = self.get_interface_ipv6(interface)
 
@@ -574,6 +630,7 @@ class SimpleNetlink(object):
         self.ipr.link("set", index=idx, state="down")
 
     def delete_interface(self, interface_name):
+        self.disable_dhcp(interface_name, self._current_namespace)
         idx = self.get_interface_index(interface_name)
         self.ipr.link("del", index=idx)
         self._log.debug(f"deleted interface {interface_name} from namespace {self._current_namespace}")
@@ -704,6 +761,7 @@ class SimpleNetlink(object):
                 "mtu": link.get_attr("IFLA_MTU"),
                 "ipv4": ipv4,
                 "ipv6": ipv6,
+                "dhcp": (interface_name, self._current_namespace) in self._dhcp_interfaces,
                 **additional_parameters
             }
         return results

@@ -21,7 +21,10 @@ class SimpleNetlink(object):
         self._previous_namespace_instance = None
         self._previous_namespace = None
         if self.ipr:
-            self.ipr.close()
+            try:
+                self.ipr.close()
+            except Exception:
+                pass
         self.ipr = IPRoute()
 
     def get_interface_index(self, ifname):
@@ -85,34 +88,39 @@ class SimpleNetlink(object):
 
     def delete_namespace(self, namespace):
         if namespace in self.get_namespaces():
-            self.set_current_namespace(namespace)
-            for interface_name, interface_cfg in self.get_network_interfaces_info().items():
-                if interface_name == "lo":
-                    continue
-                for ipv4 in interface_cfg.get("ipv4", []):
-                    self.interface_delete_ipv4(interface_name, ipv4["prefix"])
-                for ipv6 in interface_cfg.get("ipv6", []):
-                    self.interface_delete_ipv6(interface_name, ipv6["prefix"])
-                iface_type = interface_cfg.get("type")
-                if iface_type in ("tagged", "ipvlan", "tun", "tap"):
-                    try:
-                        idx = self.get_interface_index(interface_name)
-                        self.ipr.link("del", index=idx)
-                        self._log.debug(f"deleted {iface_type} interface {interface_name} from {namespace}")
-                    except Exception as e:
-                        self._log.debug(f"could not delete interface {interface_name}: {e}")
-            self.ipr.close()
-            self.ipr.remove()
-            self.restore_previous_namespace()
-
-            # ns = NetNS(namespace)
-
-            # ns.close()
-            # ns.remove()
+            try:
+                self.set_current_namespace(namespace)
+                for interface_name, interface_cfg in self.get_network_interfaces_info().items():
+                    if interface_name == "lo":
+                        continue
+                    for ipv4 in interface_cfg.get("ipv4", []):
+                        self.interface_delete_ipv4(interface_name, ipv4["prefix"])
+                    for ipv6 in interface_cfg.get("ipv6", []):
+                        self.interface_delete_ipv6(interface_name, ipv6["prefix"])
+                    iface_type = interface_cfg.get("type")
+                    if iface_type in ("tagged", "ipvlan", "tun", "tap"):
+                        try:
+                            idx = self.get_interface_index(interface_name)
+                            self.ipr.link("del", index=idx)
+                            self._log.debug(f"deleted {iface_type} interface {interface_name} from {namespace}")
+                        except Exception as e:
+                            self._log.debug(f"could not delete interface {interface_name}: {e}")
+                try:
+                    self.ipr.close()
+                except Exception:
+                    pass
+                try:
+                    self.ipr.remove()
+                except Exception:
+                    pass
+            finally:
+                # Always restore to a valid root IPRoute regardless of what went wrong
+                self.ipr = IPRoute()
+                self._current_namespace = None
+                self._previous_namespace = None
+                self._previous_namespace_instance = None
 
             self._log.debug(f"removed namespace {namespace}")
-            if namespace == self._current_namespace:
-                self.set_current_namespace(None)
             time.sleep(
                 0.1
             )  # give kernel some time, this workarounds various 'already existing' problams
@@ -340,6 +348,22 @@ class SimpleNetlink(object):
                 break
         return info
 
+    def _resolve_parent_name_by_index(self, idx):
+        """Return the name of a virtual interface's parent (IFLA_LINK), or None.
+        The parent lives in root, resolved the same way get_network_interfaces_info() does,
+        so the result matches the parent_interface value shown in / submitted from the UI."""
+        try:
+            parent_idx = self.ipr.link("get", index=idx)[0].get_attr("IFLA_LINK")
+        except Exception:
+            return None
+        if not parent_idx:
+            return None
+        try:
+            with IPRoute() as _root:
+                return _root.link("get", index=parent_idx)[0].get_attr("IFLA_IFNAME")
+        except Exception:
+            return None
+
     def get_interface_mtu(self):
         for attr in self.ipr.link("get", index=idx)[0]["attrs"]:
             if attr[0] == "IFLA_MTU":
@@ -440,10 +464,23 @@ class SimpleNetlink(object):
             interface_info = self._resolve_interface_type_by_index(idx)
             if kwargs.get("type"):
                 if interface_info.get("type") != kwargs.get("type"):
-                    self.delete_interface()
+                    self.delete_interface(interface)
                     raise ValueError(
                         "Cannot change interface type. please delete the interface and recreate with new configuration"
                     )
+
+            # A virtual interface cannot be reparented in place — if the requested parent
+            # differs from the current one, delete and recreate it on the new parent.
+            if (kwargs.get("type") in self._supported_virtual_interface_types
+                    and kwargs.get("parent_interface")):
+                current_parent = self._resolve_parent_name_by_index(idx)
+                if current_parent and current_parent != kwargs.get("parent_interface"):
+                    self._log.debug(
+                        f"parent_interface of {interface} changed "
+                        f"{current_parent} -> {kwargs.get('parent_interface')} -> recreating"
+                    )
+                    self.delete_interface(interface)
+                    namespace, idx = self.create_interface(interface, **kwargs)
 
             if kwargs.get("mtu"):
                 self.ipr.link("set", index=idx, mtu=kwargs.get("mtu"))

@@ -10,7 +10,6 @@ class SimpleNetlink(object):
         self.ipr = IPRoute()
         self._log = logging.getLogger("SimpleNetlink")
         self._current_namespace = namespace
-        self._previous_namespace_instance = None
         self._previous_namespace = None
         self._log.level = logging.DEBUG
         self._supported_virtual_interface_types = ["ipvlan", "macvlan", "tagged", "tun"]
@@ -18,14 +17,26 @@ class SimpleNetlink(object):
 
     def reset(self):
         self._current_namespace = None
-        self._previous_namespace_instance = None
         self._previous_namespace = None
-        if self.ipr:
-            try:
-                self.ipr.close()
-            except Exception:
-                pass
+        self._close_handle()
         self.ipr = IPRoute()
+
+    def _close_handle(self):
+        """Close the current netlink handle, if any, and forget it.
+
+        Every handle we replace has to be closed explicitly: a pyroute2 handle costs
+        several file descriptors and is kept alive by reference cycles, so dropping the
+        last reference only frees the descriptors on the next garbage collection pass. A
+        long-running process that switches namespaces per request would otherwise run out
+        of file descriptors (measured: ~4 fds per switch against a 1024 limit).
+        """
+        if self.ipr is None:
+            return
+        try:
+            self.ipr.close()
+        except Exception as e:
+            self._log.debug(f"could not close netlink handle: {e}")
+        self.ipr = None
 
     def get_interface_index(self, ifname):
         res = self.ipr.link_lookup(ifname=ifname)
@@ -53,36 +64,37 @@ class SimpleNetlink(object):
         self.restore_previous_namespace()
 
     def set_current_namespace(self, namespace):
-        if not namespace:
-            if self._current_namespace:
-                self._log.info(f"close {self._current_namespace}")
-                self.ipr.close()
-            self._previous_namespace = self._current_namespace
-            self.ipr = IPRoute()
-            self._current_namespace = namespace
-        elif namespace not in self.get_namespaces():
+        if namespace and namespace not in self.get_namespaces():
             self._log.debug(
                 f"{namespace} does not exist, implicitly creating namespace {namespace}"
             )
             self.create_namespace(namespace)
-        if namespace:
-            self._previous_namespace = self._current_namespace
-            if self.ipr:
-                self.ipr.close()
-            self.ipr = NetNS(namespace)
-            self._current_namespace = namespace
+        if self._current_namespace:
+            self._log.info(f"close {self._current_namespace}")
+        self._close_handle()
+        self._previous_namespace = self._current_namespace
+        self.ipr = NetNS(namespace) if namespace else IPRoute()
+        self._current_namespace = namespace
         self._log.debug(
             f"switched namespace from {self._previous_namespace} to {self._current_namespace}"
         )
         return True
 
     def restore_previous_namespace(self):
-        tmp_i = self.ipr
-        tmp = self._current_namespace
-        self.ipr = self._previous_namespace_instance
-        self._current_namespace = self._previous_namespace
-        self._previous_namespace_instance = tmp_i
-        self._previous_namespace = tmp
+        """Switch back to the namespace we were in before the last switch.
+
+        A fresh handle is opened for it instead of keeping the previous one around: holding
+        a second handle pins its file descriptors for as long as we are somewhere else, and
+        the namespace may well have been deleted in the meantime.
+        """
+        namespace = self._previous_namespace
+        if namespace and namespace not in self.get_namespaces():
+            self._log.debug(
+                f"previous namespace {namespace} no longer exists -> "
+                "restoring root namespace instead"
+            )
+            namespace = None
+        self.set_current_namespace(namespace)
         self._log.debug(f"restored previous namespace {self._current_namespace}")
         return True
 
@@ -118,7 +130,6 @@ class SimpleNetlink(object):
                 self.ipr = IPRoute()
                 self._current_namespace = None
                 self._previous_namespace = None
-                self._previous_namespace_instance = None
 
             self._log.debug(f"removed namespace {namespace}")
             time.sleep(

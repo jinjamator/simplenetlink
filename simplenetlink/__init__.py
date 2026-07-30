@@ -64,6 +64,13 @@ class SimpleNetlink(object):
         self.restore_previous_namespace()
 
     def set_current_namespace(self, namespace):
+        if namespace == self._current_namespace:
+            # Already there: skip the close/reopen. NetNS() forks a child process per
+            # call (pyroute2 setns dance), so a request that redundantly re-enters the
+            # same namespace several times (as our own model code does) was forking a
+            # short-lived OS process each time - dozens per request against a namespace
+            # tree of any size, which was tipping single-threaded WSGI servers over.
+            return True
         if namespace and namespace not in self.get_namespaces():
             self._log.debug(
                 f"{namespace} does not exist, implicitly creating namespace {namespace}"
